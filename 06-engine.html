@@ -151,21 +151,25 @@ const GROUND_BLOCKS = {
   PATH:   { layer1: [ {col:2,row:2}, {col:3,row:2}, {col:2,row:3}, {col:3,row:3} ], layer2: null },
 };
 
-// Generische Block-Zeichenfunktion: 1 Block = 16x16 (4 Subtiles), skaliert auf DTILE.
-function drawBlock(destX, destY, block, srcImg){
-  if (!block) return;
+// Zeichnet EINE Ebene (4 Subtiles) eines Blocks, skaliert auf DTILE.
+function drawLayerBlock(destX, destY, layer, srcImg){
+  if (!layer) return;
   const order = [[0,0],[1,0],[0,1],[1,1]]; // TL,TR,BL,BR
   const half = DTILE/2;
-  function drawLayer(layer){
-    layer.forEach((t,i)=>{
-      if (!t) return;
-      const [qx,qy] = order[i];
-      ctx.drawImage(srcImg, t.col*SUB, t.row*SUB, SUB, SUB,
-        destX + qx*half, destY + qy*half, half, half);
-    });
-  }
-  drawLayer(block.layer1);
-  if (block.layer2) drawLayer(block.layer2);
+  layer.forEach((t,i)=>{
+    if (!t) return;
+    const [qx,qy] = order[i];
+    ctx.drawImage(srcImg, t.col*SUB, t.row*SUB, SUB, SUB,
+      destX + qx*half, destY + qy*half, half, half);
+  });
+}
+
+// Generische Block-Zeichenfunktion: beide Ebenen direkt übereinander (für
+// Ground-Blöcke wie GRASS/PATH/FLOWER, die immer komplett unter dem Hero liegen).
+function drawBlock(destX, destY, block, srcImg){
+  if (!block) return;
+  drawLayerBlock(destX, destY, block.layer1, srcImg);
+  drawLayerBlock(destX, destY, block.layer2, srcImg);
 }
 
 // ----------------------------------------------------------------------------
@@ -201,17 +205,58 @@ const OBJECT_tree = {
   ]
 };
 
+// Alleinstehende Variante: obere Reihe nutzt normales Gras statt "tree_with_grass"
+// als Ebene 1 (die verschmolzene Gras+Stamm-Grafik ergibt nur Sinn, wenn Bäume
+// direkt aneinandergereiht sind und sich gegenseitig "verstecken" - bei einem
+// einzeln stehenden Baum sähe man sonst einen Stamm-Ansatz ohne zweiten Baum
+// dahinter). Ebene 2 (Baumkrone) bleibt identisch.
+const OBJECT_tree_solo = {
+  name: "tree_solo",
+  w: 2, h: 3,
+  cells: OBJECT_tree.cells.map(c => c.dy === 0 ? { ...c, layer1: GRASS_SUB } : c)
+};
+
+// groundOverlays: zusätzliche Ebene-1-Kacheln von Objekten (z.B. die
+// Gras/Baum-Verschmelzung unter einer Baumkrone). Werden IMMER in der
+// Boden-Passage gezeichnet (also vor Objekten/Hero, nie tiefensortiert) -
+// dadurch steht der Hero garantiert "auf" dieser Ebene, egal was Ebene 2
+// später darüber zeichnet.
+const groundOverlays = [];
+
 function placeTileObject(obj, tx, ty){
   obj.cells.forEach(c=>{
     collision[ty+c.dy][tx+c.dx] = c.code;
+    if (c.layer1){
+      groundOverlays.push({ x: tx+c.dx, y: ty+c.dy, layer1: c.layer1 });
+    }
   });
   objects.push({
     type:'tileObject', x:tx, y:ty, sortY:ty,
     draw(px,py){
+      // NUR Ebene 2 (z.B. Baumkrone/Stamm) - die nimmt an der Tiefensortierung
+      // gegen den Hero teil. Ebene 1 wurde schon in der Boden-Passage gezeichnet.
       obj.cells.forEach(c=>{
-        drawBlock(px + c.dx*DTILE, py + c.dy*DTILE, { layer1:c.layer1, layer2:c.layer2 }, tilesImg);
+        drawLayerBlock(px + c.dx*DTILE, py + c.dy*DTILE, c.layer2, tilesImg);
       });
     }
+  });
+}
+
+// Platziert eine einzelne, komplett gesperrte Baum-Reihe am oberen Kartenrand -
+// stellt den abgeschnittenen Ansatz eines weiteren (höheren) Baums dar. Das muss
+// die MITTLERE Baum-Grafik sein (dy=1: Kronenkörper), nicht die Kronenspitze
+// (dy=0) - sonst sieht man zwei Spitzen übereinander statt einer durchgehenden
+// Krone, die am Kartenrand abgeschnitten wirkt.
+function placeTreeCapRow(tx, ty){
+  OBJECT_tree.cells.filter(c => c.dy === 1).forEach(c=>{
+    const ax = tx + (c.dx), ay = ty;
+    if (ay < 0 || ay >= MAP_H || ax < 0 || ax >= MAP_W) return;
+    collision[ay][ax] = CODE.BLOCKED;
+    groundOverlays.push({ x:ax, y:ay, layer1: c.layer1 });
+    objects.push({
+      type:'tileObject', x:ax, y:ay, sortY:ay,
+      draw(px,py){ drawLayerBlock(px, py, c.layer2, tilesImg); }
+    });
   });
 }
 
@@ -263,8 +308,20 @@ placeTileObject(OBJECT_tree, 5, 1);
 placeTileObject(OBJECT_tree, 8, 1);
 placeTileObject(OBJECT_tree, 11, 1);
 placeTileObject(OBJECT_tree, 14, 1);
-placeTileObject(OBJECT_tree, 4, 4);
-placeTileObject(OBJECT_tree, 16, 4);
+placeTileObject(OBJECT_tree_solo, 4, 4);
+placeTileObject(OBJECT_tree_solo, 16, 4);
+
+// abgeschnittener Ansatz eines weiteren Baums am oberen Kartenrand - blockiert
+[2, 5, 8, 11, 14].forEach(x => placeTreeCapRow(x, 0));
+
+// Die "dahinter laufen"-Illusion (BEHIND) der Kronenspitze ergibt nur bei einem
+// freistehenden Baum Sinn (offenes Gras darüber). Die 5 Wald-Bäume haben jetzt
+// aber die Deckreihe direkt darüber -> deren Kronenspitze muss ebenfalls
+// blockiert sein, kein "dahinter" mehr vorhanden.
+[2, 5, 8, 11, 14].forEach(x=>{
+  collision[1][x]   = CODE.BLOCKED;
+  collision[1][x+1] = CODE.BLOCKED;
+});
 placeSign(6, 6, 'sign_welcome');
 placeSign(12, 9, 'sign_house');
 
@@ -284,8 +341,8 @@ const HERO_BOTTOM_PAD = 0; // Frames sind volle 16x32-Zellen mit eigenem Fuss-Ab
 // HERO / SPIELER
 // ----------------------------------------------------------------------------
 const player = {
-  gridX: 3, gridY: 3,
-  px: 3*DTILE, py: 3*DTILE,
+  gridX: 3, gridY: 4,
+  px: 3*DTILE, py: 4*DTILE,
   facing: 'down',
   moving: false,
   moveFrom: {x:0,y:0},
@@ -408,6 +465,14 @@ function render(){
   for (let y=startY; y<endY; y++){
     for (let x=startX; x<endX; x++){
       drawBlock(x*DTILE - camX, y*DTILE - camY, GROUND_BLOCKS[ground[y][x]], tilesImg);
+    }
+  }
+
+  // Ebene 0b: zusätzliche Ebene-1-Kacheln von Objekten (z.B. Baum-Basis-Verschmelzung)
+  // - ebenfalls immer unter dem Hero, deshalb hier und nicht in der Tiefensortierung.
+  for (const go of groundOverlays){
+    if (go.x>=startX && go.x<endX && go.y>=startY && go.y<endY){
+      drawLayerBlock(go.x*DTILE - camX, go.y*DTILE - camY, go.layer1, tilesImg);
     }
   }
 
