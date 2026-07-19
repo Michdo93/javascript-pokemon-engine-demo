@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Tool 4 – Hero-Sprite-Ausschneider (8x8-Raster)</title>
+<style>
+  :root{ --bg:#1a1a2e; --panel:#242440; --accent:#ffd76b; --line:#3a3a5c; }
+  body{ margin:0; font-family:"Courier New",monospace; background:var(--bg); color:#eee; }
+  header{ padding:14px 20px; background:var(--panel); border-bottom:2px solid var(--line); }
+  h1{ margin:0 0 4px; font-size:18px; }
+  header p{ margin:2px 0; font-size:12px; color:#aab; }
+  code{ color:#8ecdf7; }
+  .layout{ display:flex; gap:16px; padding:16px; align-items:flex-start; flex-wrap:wrap; }
+  .panel{ background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:14px; }
+  #canvasWrap{ max-width:55vw; max-height:80vh; overflow:auto; border:2px solid var(--line); border-radius:4px;
+    background: repeating-conic-gradient(#2a2a2a 0% 25%, #333 0% 50%) 50% / 16px 16px; }
+  canvas{ display:block; image-rendering:pixelated; }
+  #main{ cursor:crosshair; }
+  label{ display:block; font-size:11px; color:#9ab; margin:8px 0 2px; }
+  input, select{
+    width:70px; background:#111; color:#eee; border:1px solid var(--line); border-radius:4px;
+    padding:4px 6px; font-family:inherit; font-size:12px;
+  }
+  .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; }
+  button{
+    background:#33335a; color:#eee; border:1px solid var(--line); border-radius:4px;
+    padding:6px 10px; cursor:pointer; font-family:inherit; font-size:12px; margin-top:8px;
+  }
+  button:hover{ background:#44446e; }
+  #preview{ image-rendering:pixelated;
+    background: repeating-conic-gradient(#2a2a2a 0% 25%, #333 0% 50%) 50% / 10px 10px;
+    border:1px solid var(--line); }
+  table{ border-collapse:collapse; font-size:11px; margin-top:8px; }
+  td,th{ border:1px solid var(--line); padding:4px; text-align:center; }
+  th{ color:var(--accent); }
+  .gridBtn{
+    width:56px; height:56px; background:#111; padding:0;
+    cursor:pointer; border:1px solid var(--line);
+    position:relative; display:flex; align-items:center; justify-content:center;
+  }
+  .gridBtn canvas{ position:absolute; top:0; left:0; }
+  .gridBtn .emptyLabel{ font-size:9px; color:#556; pointer-events:none; }
+  .gridBtn:hover{ border-color:var(--accent); }
+  .gridBtn.filled{ outline:2px solid #7ec4ff; }
+  textarea{
+    width:360px; height:220px; background:#111; color:#8ecdf7; border:1px solid var(--line);
+    border-radius:4px; padding:8px; font-family:inherit; font-size:11px;
+  }
+  #notfound{ display:none; color:#ff8080; padding:20px; }
+  .hint{ font-size:11px; color:#9ab; }
+  .readout{ font-size:12px; margin-top:6px; }
+  .readout b{ color:var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Tool 4 / 5 — Hero-Sprite aus 8x8-Rasterzellen zusammensetzen</h1>
+  <p>Erwartet <code>hero.png</code> im selben Ordner. Klick auf eine Rasterzelle = <b>erste Ecke</b>,
+     Klick auf eine zweite Zelle = <b>zweite Ecke</b> → die Auswahl ist das Rechteck aus allen
+     8x8-Zellen dazwischen. Dann Richtung + Frame wählen und auf <b>"+ Hinzufügen"</b> klicken
+     (oder direkt in der Tabelle auf die Zielzelle klicken). Ein neuer Klick im Bild startet
+     eine neue Auswahl.</p>
+</header>
+
+<div class="layout">
+
+  <div class="panel">
+    <div class="row" style="margin-bottom:8px;">
+      <div><label>Zoom</label><select id="zoom">
+        <option>2</option><option>4</option><option selected>6</option><option>8</option>
+      </select></div>
+      <div class="hint" id="clickHint">Klick = 1. Ecke wählen</div>
+    </div>
+    <div id="canvasWrap"><canvas id="main"></canvas></div>
+    <div id="notfound">
+      ⚠️ <code>hero.png</code> nicht gefunden. Datei danebenlegen oder <code>IMG_SRC</code> im Script anpassen.
+    </div>
+  </div>
+
+  <div class="panel" style="min-width:280px;">
+    <h3 style="font-size:13px;color:var(--accent);margin:0 0 8px;">Aktuelle Auswahl (8x8-Raster)</h3>
+    <div class="row">
+      <div><label>Spalte von</label><input type="number" id="col0" value="0"></div>
+      <div><label>Zeile von</label><input type="number" id="row0" value="0"></div>
+      <div><label>Spalte bis</label><input type="number" id="col1" value="1"></div>
+      <div><label>Zeile bis</label><input type="number" id="row1" value="3"></div>
+    </div>
+    <div class="readout">Pixel: <b id="pxOut">0,0 – 16x32</b></div>
+
+    <canvas id="preview" width="96" height="192" style="margin-top:6px;"></canvas>
+    <label style="margin-top:6px;"><input type="checkbox" id="selFlip"> horizontal spiegeln beim Zuweisen
+      (z.B. "links" aus "rechts" ableiten)</label>
+
+    <h3 style="font-size:13px;color:var(--accent);margin:16px 0 6px;">Zuweisen: Richtung × Frame</h3>
+    <div class="row">
+      <div><label>Richtung</label>
+        <select id="targetDir">
+          <option value="down">unten</option>
+          <option value="up">oben</option>
+          <option value="left">links</option>
+          <option value="right">rechts</option>
+        </select>
+      </div>
+      <div><label>Frame</label>
+        <select id="targetFrame">
+          <option value="0">0 (Schritt-links)</option>
+          <option value="1" selected>1 (Stand)</option>
+          <option value="2">2 (Schritt-rechts)</option>
+        </select>
+      </div>
+      <div><button id="addBtn">+ Hinzufügen</button></div>
+    </div>
+    <table id="assignTable"></table>
+    <p style="font-size:10px;color:#9ab;">Alternative: direkt in der Tabelle auf eine Zelle klicken
+       speichert die aktuelle Auswahl dort ebenfalls.
+       Spalten = Frame (0=Schritt-links,1=Stand,2=Schritt-rechts), Zeilen = Richtung.</p>
+
+    <label style="margin-top:10px;">Export (JS, für Tool 5 / Engine)</label>
+    <textarea id="output" readonly></textarea>
+    <button id="copyBtn">In Zwischenablage kopieren</button>
+  </div>
+
+</div>
+
+<script>
+const IMG_SRC = "hero.png";
+const GRID = 8; // Basis-Raster in Originalpixeln
+const DIRS = ['down','up','left','right'];
+const FRAMES = [0,1,2];
+
+const img = new Image();
+img.src = IMG_SRC;
+
+const canvas = document.getElementById('main');
+const ctx = canvas.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+
+const previewCanvas = document.getElementById('preview');
+const pctx = previewCanvas.getContext('2d');
+pctx.imageSmoothingEnabled = false;
+
+// Auswahl in Raster-Einheiten (col/row, jeweils inklusiv)
+let selCell = { col0:0, row0:0, col1:1, row1:3 };
+let anchor = null; // erste angeklickte Zelle, solange die 2. noch fehlt
+const assigned = {}; // key "dir-frame" -> {x,y,w,h,flip?}
+
+function zoom(){ return parseInt(document.getElementById('zoom').value,10); }
+
+// abgeleitetes rohes Pixel-Rechteck aus der Raster-Auswahl
+function pixelRect(){
+  const c0 = Math.min(selCell.col0, selCell.col1);
+  const c1 = Math.max(selCell.col0, selCell.col1);
+  const r0 = Math.min(selCell.row0, selCell.row1);
+  const r1 = Math.max(selCell.row0, selCell.row1);
+  return {
+    x: c0*GRID, y: r0*GRID,
+    w: (c1-c0+1)*GRID, h: (r1-r0+1)*GRID
+  };
+}
+
+function draw(){
+  const z = zoom();
+  canvas.width = img.width*z;
+  canvas.height = img.height*z;
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.drawImage(img,0,0,canvas.width,canvas.height);
+
+  // 8x8-Rasterlinien (immer sichtbar - das ist jetzt das primäre Auswahlraster)
+  ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+  ctx.lineWidth = 1;
+  for (let x=0;x<=canvas.width;x+=GRID*z){ ctx.beginPath();ctx.moveTo(x+.5,0);ctx.lineTo(x+.5,canvas.height);ctx.stroke(); }
+  for (let y=0;y<=canvas.height;y+=GRID*z){ ctx.beginPath();ctx.moveTo(0,y+.5);ctx.lineTo(canvas.width,y+.5);ctx.stroke(); }
+
+  // aktueller Anker (1. Ecke), solange 2. Ecke noch fehlt
+  if (anchor){
+    ctx.strokeStyle = '#7ec4ff';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([4,3]);
+    ctx.strokeRect(anchor.col*GRID*z, anchor.row*GRID*z, GRID*z, GRID*z);
+    ctx.setLineDash([]);
+  }
+
+  // fertige Auswahl (Rechteck aus mehreren 8x8-Zellen)
+  const r = pixelRect();
+  ctx.strokeStyle = '#ffd76b';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(r.x*z, r.y*z, r.w*z, r.h*z);
+
+  drawPreview();
+}
+
+function drawPreview(){
+  pctx.clearRect(0,0,previewCanvas.width,previewCanvas.height);
+  const r = pixelRect();
+  if (r.w<=0 || r.h<=0) return;
+  const scale = Math.min(previewCanvas.width/r.w, previewCanvas.height/r.h);
+  const flip = document.getElementById('selFlip').checked;
+  pctx.save();
+  if (flip){ pctx.translate(previewCanvas.width,0); pctx.scale(-1,1); }
+  const dx = (previewCanvas.width - r.w*scale)/2;
+  pctx.drawImage(img, r.x, r.y, r.w, r.h, dx, 0, r.w*scale, r.h*scale);
+  pctx.restore();
+  document.getElementById('pxOut').textContent = `${r.x},${r.y} – ${r.w}x${r.h}`;
+}
+
+function syncInputs(){
+  document.getElementById('col0').value = selCell.col0;
+  document.getElementById('row0').value = selCell.row0;
+  document.getElementById('col1').value = selCell.col1;
+  document.getElementById('row1').value = selCell.row1;
+}
+
+canvas.addEventListener('click', (e)=>{
+  const rect = canvas.getBoundingClientRect();
+  const z = zoom();
+  const x = (e.clientX-rect.left) * (canvas.width/rect.width);
+  const y = (e.clientY-rect.top) * (canvas.height/rect.height);
+  const col = Math.floor(x/(GRID*z));
+  const row = Math.floor(y/(GRID*z));
+
+  if (!anchor){
+    anchor = { col, row };
+    document.getElementById('clickHint').textContent = '1. Ecke gesetzt — Klick = 2. Ecke wählen';
+  } else {
+    selCell = { col0: anchor.col, row0: anchor.row, col1: col, row1: row };
+    anchor = null;
+    document.getElementById('clickHint').textContent = 'Klick = 1. Ecke wählen';
+    syncInputs();
+  }
+  draw();
+});
+
+['col0','row0','col1','row1'].forEach(id=>{
+  document.getElementById(id).addEventListener('change', ()=>{
+    selCell.col0 = parseInt(document.getElementById('col0').value||0,10);
+    selCell.row0 = parseInt(document.getElementById('row0').value||0,10);
+    selCell.col1 = parseInt(document.getElementById('col1').value||0,10);
+    selCell.row1 = parseInt(document.getElementById('row1').value||0,10);
+    anchor = null;
+    document.getElementById('clickHint').textContent = 'Klick = 1. Ecke wählen';
+    draw();
+  });
+});
+document.getElementById('zoom').addEventListener('change', draw);
+document.getElementById('selFlip').addEventListener('change', drawPreview);
+
+const cellRefs = {}; // key -> { canvas, label }
+
+function buildTable(){
+  const table = document.getElementById('assignTable');
+  let html = '<tr><th>Richtung \\ Frame</th>' + FRAMES.map(f=>`<th>${f}</th>`).join('') + '</tr>';
+  DIRS.forEach(dir=>{
+    html += `<tr><th>${dir}</th>` + FRAMES.map(f=>{
+      const key = `${dir}-${f}`;
+      return `<td><button class="gridBtn" data-key="${key}">
+        <canvas width="56" height="56" data-canvas="${key}"></canvas>
+        <span class="emptyLabel" data-label="${key}">leer</span>
+      </button></td>`;
+    }).join('') + '</tr>';
+  });
+  table.innerHTML = html;
+
+  table.querySelectorAll('.gridBtn').forEach(btn=>{
+    cellRefs[btn.dataset.key] = {
+      canvas: btn.querySelector('canvas'),
+      label: btn.querySelector('.emptyLabel'),
+    };
+    btn.addEventListener('click', ()=> assignToSlot(btn.dataset.key));
+  });
+}
+
+// Zentrale Zuweisungs-Funktion: wird sowohl vom "+ Hinzufügen"-Button
+// als auch vom direkten Klick auf eine Tabellenzelle verwendet.
+function assignToSlot(key){
+  const r = pixelRect();
+  const flip = document.getElementById('selFlip').checked;
+  assigned[key] = { ...r, flip };
+  renderThumb(key, assigned[key]);
+  updateOutput();
+}
+
+document.getElementById('addBtn').addEventListener('click', ()=>{
+  const dir = document.getElementById('targetDir').value;
+  const frame = document.getElementById('targetFrame').value;
+  assignToSlot(`${dir}-${frame}`);
+});
+
+// Zeichnet direkt auf ein sichtbares <canvas> (kein toDataURL/getImageData) -
+// funktioniert dadurch auch bei lokal geöffneten Dateien (file://), wo ein
+// "getainteter" Canvas das Auslesen von Bilddaten sonst blockieren würde.
+function renderThumb(key, rect){
+  const refs = cellRefs[key];
+  if (!refs) return;
+  const c = refs.canvas.getContext('2d');
+  c.imageSmoothingEnabled = false;
+  c.clearRect(0,0,56,56);
+  const scale = Math.min(56/rect.w, 56/rect.h);
+  c.save();
+  if (rect.flip){ c.translate(56,0); c.scale(-1,1); }
+  c.drawImage(img, rect.x, rect.y, rect.w, rect.h, (56-rect.w*scale)/2, 0, rect.w*scale, rect.h*scale);
+  c.restore();
+  refs.label.style.display = 'none';
+  refs.canvas.parentElement.classList.add('filled');
+}
+
+function updateOutput(){
+  const lines = [];
+  DIRS.forEach(dir=>{
+    const frames = FRAMES.map(f=>{
+      const r = assigned[dir+'-'+f];
+      if (!r) return 'null';
+      return r.flip ? `{ x:${r.x}, y:${r.y}, w:${r.w}, h:${r.h}, flip:true }`
+                    : `{ x:${r.x}, y:${r.y}, w:${r.w}, h:${r.h} }`;
+    });
+    lines.push(`  ${dir}: [ ${frames.join(', ')} ]`);
+  });
+  document.getElementById('output').value =
+`// Reihenfolge je Richtung: [Frame0 (Schritt-links), Frame1 (Stand), Frame2 (Schritt-rechts)]
+// Koordinaten sind rohe Pixel, abgeleitet aus 8x8-Rasterzellen.
+// flip:true = Bild wird beim Zeichnen horizontal gespiegelt (z.B. "links" aus "rechts" abgeleitet)
+const HERO_FRAMES = {
+${lines.join(',\n')}
+};`;
+}
+
+document.getElementById('copyBtn').addEventListener('click', ()=>{
+  const ta = document.getElementById('output'); ta.select(); document.execCommand('copy');
+});
+
+img.onload = ()=>{ syncInputs(); draw(); buildTable(); };
+img.onerror = ()=>{ document.getElementById('notfound').style.display='block'; };
+</script>
+</body>
+</html>

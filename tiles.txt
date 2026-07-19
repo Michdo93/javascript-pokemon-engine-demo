@@ -1,0 +1,80 @@
+const TILE_COORDS = [
+  { name: "grass", col: 6, row: 0 },
+  { name: "grass", col: 7, row: 0 },
+  { name: "grass", col: 6, row: 1 },
+  { name: "grass", col: 7, row: 1 },
+  { name: "flower", col: 0, row: 4 },
+  { name: "flower", col: 1, row: 4 },
+  { name: "flower", col: 0, row: 5 },
+  { name: "flower", col: 1, row: 5 },
+  { name: "tree", col: 52, row: 224 },
+  { name: "tree", col: 53, row: 224 },
+  { name: "tree", col: 54, row: 224 },
+  { name: "tree", col: 55, row: 224 },
+  { name: "tree", col: 52, row: 225 },
+  { name: "tree", col: 53, row: 225 },
+  { name: "tree", col: 54, row: 225 },
+  { name: "tree", col: 55, row: 225 },
+  { name: "tree", col: 52, row: 226 },
+  { name: "tree", col: 53, row: 226 },
+  { name: "tree", col: 54, row: 226 },
+  { name: "tree", col: 55, row: 226 },
+  { name: "tree", col: 52, row: 227 },
+  { name: "tree", col: 53, row: 227 },
+  { name: "tree", col: 54, row: 227 },
+  { name: "tree", col: 55, row: 227 },
+  { name: "tree", col: 52, row: 228 },
+  { name: "tree", col: 53, row: 228 },
+  { name: "tree", col: 54, row: 228 },
+  { name: "tree", col: 55, row: 228 },
+  { name: "tree", col: 52, row: 229 },
+  { name: "tree", col: 53, row: 229 },
+  { name: "tree", col: 54, row: 229 },
+  { name: "tree", col: 55, row: 229 },
+  { name: "tree_with_grass", col: 48, row: 224 },
+  { name: "tree_with_grass", col: 49, row: 224 },
+  { name: "tree_with_grass", col: 50, row: 224 },
+  { name: "tree_with_grass", col: 51, row: 224 },
+  { name: "tree_with_grass", col: 48, row: 225 },
+  { name: "tree_with_grass", col: 49, row: 225 },
+  { name: "tree_with_grass", col: 50, row: 225 },
+  { name: "tree_with_grass", col: 51, row: 225 }
+];
+
+
+
+
+// Reihenfolge je Ebene: [TL, TR, BL, BR] -- je {col,row} im 8x8-Raster von tileset.png
+const BLOCK_mein_block = {
+  name: "mein_block",
+  layer1: [ { col: 6, row: 0 }, { col: 7, row: 0 }, { col: 6, row: 1 }, { col: 7, row: 1 } ],
+  layer2: [ { col: 0, row: 4 }, { col: 1, row: 4 }, { col: 0, row: 5 }, { col: 1, row: 5 } ], // null = keine 2. Ebene für diesen Block
+};
+
+
+
+// dx,dy = Offset relativ zur Objekt-Ankerposition (oben links)
+const OBJECT_tree = {
+  name: "tree",
+  w: 2, h: 3, // in 16x16-Blöcken
+  cells: [
+  { dx:0, dy:0, code:1, // 0=frei 1=blockiert 2=dahinter-laufen
+    layer1:[{col:6,row:0}, {col:7,row:0}, {col:6,row:1}, {col:7,row:1}],
+    layer2:[{col:0,row:4}, {col:1,row:4}, {col:0,row:5}, {col:1,row:5}] },
+  { dx:1, dy:0, code:1, // 0=frei 1=blockiert 2=dahinter-laufen
+    layer1:[{col:6,row:0}, {col:7,row:0}, {col:6,row:1}, {col:7,row:1}],
+    layer2:[{col:0,row:4}, {col:1,row:4}, {col:0,row:5}, {col:1,row:5}] },
+  { dx:0, dy:1, code:1, // 0=frei 1=blockiert 2=dahinter-laufen
+    layer1:[{col:6,row:0}, {col:7,row:0}, {col:6,row:1}, {col:7,row:1}],
+    layer2:[{col:0,row:4}, {col:1,row:4}, {col:0,row:5}, {col:1,row:5}] },
+  { dx:1, dy:1, code:1, // 0=frei 1=blockiert 2=dahinter-laufen
+    layer1:[{col:6,row:0}, {col:7,row:0}, {col:6,row:1}, {col:7,row:1}],
+    layer2:[{col:0,row:4}, {col:1,row:4}, {col:0,row:5}, {col:1,row:5}] },
+  { dx:0, dy:2, code:1, // 0=frei 1=blockiert 2=dahinter-laufen
+    layer1:[{col:6,row:0}, {col:7,row:0}, {col:6,row:1}, {col:7,row:1}],
+    layer2:[{col:0,row:4}, {col:1,row:4}, {col:0,row:5}, {col:1,row:5}] },
+  { dx:1, dy:2, code:1, // 0=frei 1=blockiert 2=dahinter-laufen
+    layer1:[{col:6,row:0}, {col:7,row:0}, {col:6,row:1}, {col:7,row:1}],
+    layer2:[{col:0,row:4}, {col:1,row:4}, {col:0,row:5}, {col:1,row:5}] }
+  ]
+};

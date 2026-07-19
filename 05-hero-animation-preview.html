@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Tool 5 – Hero-Animations-Vorschau</title>
+<style>
+  :root{ --bg:#1a1a2e; --panel:#242440; --accent:#ffd76b; --line:#3a3a5c; }
+  body{ margin:0; font-family:"Courier New",monospace; background:var(--bg); color:#eee; }
+  header{ padding:14px 20px; background:var(--panel); border-bottom:2px solid var(--line); }
+  h1{ margin:0 0 4px; font-size:18px; }
+  header p{ margin:2px 0; font-size:12px; color:#aab; }
+  code{ color:#8ecdf7; }
+  .layout{ display:flex; gap:16px; padding:16px; align-items:flex-start; flex-wrap:wrap; }
+  .panel{ background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:14px; }
+  textarea{
+    width:420px; height:160px; background:#111; color:#8ecdf7; border:1px solid var(--line);
+    border-radius:4px; padding:8px; font-family:inherit; font-size:11px; box-sizing:border-box;
+  }
+  button{
+    background:#33335a; color:#eee; border:1px solid var(--line); border-radius:4px;
+    padding:6px 12px; cursor:pointer; font-family:inherit; font-size:12px; margin:4px 4px 0 0;
+  }
+  button:hover{ background:#44446e; }
+  button.active{ outline:2px solid var(--accent); }
+  #stage{
+    image-rendering:pixelated;
+    background: repeating-conic-gradient(#2a2a2a 0% 25%, #333 0% 50%) 50% / 16px 16px;
+    border:1px solid var(--line); display:block; margin-top:10px;
+  }
+  .row{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .staticRow{ display:flex; gap:16px; margin-top:14px; }
+  .staticRow div{ text-align:center; font-size:11px; color:#9ab; }
+  .staticRow canvas{ image-rendering:pixelated;
+    background: repeating-conic-gradient(#2a2a2a 0% 25%, #333 0% 50%) 50% / 10px 10px;
+    border:1px solid var(--line); display:block; margin-bottom:4px; }
+  #err{ color:#ff8080; font-size:12px; white-space:pre-wrap; }
+  label{ font-size:11px; color:#9ab; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Tool 5 / 5 — Hero-Animation prüfen</h1>
+  <p>Füge unten den <code>HERO_FRAMES</code>-Export aus Tool 4 ein und klick "Laden". Erwartet
+     <code>hero.png</code> im selben Ordner.</p>
+</header>
+
+<div class="layout">
+
+  <div class="panel">
+    <label>HERO_FRAMES (aus Tool 4 einfügen)</label><br>
+    <textarea id="code">const HERO_FRAMES = {
+  down:  [ null, null, null ],
+  up:    [ null, null, null ],
+  left:  [ null, null, null ],
+  right: [ null, null, null ]
+};</textarea>
+    <div><button id="loadBtn">Laden</button></div>
+    <div id="err"></div>
+  </div>
+
+  <div class="panel">
+    <div class="row">
+      <span>Richtung:</span>
+      <button data-dir="down" class="dirBtn active">unten</button>
+      <button data-dir="up" class="dirBtn">oben</button>
+      <button data-dir="left" class="dirBtn">links</button>
+      <button data-dir="right" class="dirBtn">rechts</button>
+    </div>
+    <div class="row" style="margin-top:6px;">
+      <button id="playBtn">▶ Play</button>
+      <button id="stepBtn">Frame ⏭</button>
+      <label>Tempo (ms/Frame)</label>
+      <input type="range" id="speed" min="60" max="600" value="160">
+      <span id="speedVal">160ms</span>
+    </div>
+    <canvas id="stage" width="256" height="256"></canvas>
+    <p style="font-size:11px;color:#9ab;">Aktueller Frame-Index: <span id="frameIdx">1</span> (0=Schritt-links, 1=Stand, 2=Schritt-rechts)</p>
+
+    <div class="staticRow" id="staticRow"></div>
+  </div>
+
+</div>
+
+<script>
+const IMG_SRC = "hero.png";
+const img = new Image();
+img.src = IMG_SRC;
+
+let HERO_FRAMES = null;
+let dir = 'down';
+let frameOrder = [1,2,1,0]; // Lauf-Zyklus: Stand -> rechts-Schritt -> Stand -> links-Schritt
+let frameCursor = 0;
+let playing = false;
+let lastTick = 0;
+let speed = 160;
+
+const stage = document.getElementById('stage');
+const sctx = stage.getContext('2d');
+sctx.imageSmoothingEnabled = false;
+
+document.getElementById('loadBtn').addEventListener('click', ()=>{
+  const code = document.getElementById('code').value;
+  const errEl = document.getElementById('err');
+  errEl.textContent = '';
+  try {
+    HERO_FRAMES = new Function(code + '\nreturn HERO_FRAMES;')();
+    renderStatic();
+    drawStage();
+  } catch(e){
+    errEl.textContent = 'Fehler beim Parsen: ' + e.message;
+  }
+});
+
+document.querySelectorAll('.dirBtn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    dir = btn.dataset.dir;
+    document.querySelectorAll('.dirBtn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    frameCursor = 0;
+    drawStage();
+  });
+});
+
+document.getElementById('playBtn').addEventListener('click', (e)=>{
+  playing = !playing;
+  e.target.textContent = playing ? '⏸ Pause' : '▶ Play';
+  lastTick = performance.now();
+  if (playing) requestAnimationFrame(loop);
+});
+document.getElementById('stepBtn').addEventListener('click', ()=>{
+  frameCursor = (frameCursor+1) % frameOrder.length;
+  drawStage();
+});
+document.getElementById('speed').addEventListener('input', (e)=>{
+  speed = parseInt(e.target.value,10);
+  document.getElementById('speedVal').textContent = speed+'ms';
+});
+
+function loop(now){
+  if (!playing) return;
+  if (now - lastTick >= speed){
+    frameCursor = (frameCursor+1) % frameOrder.length;
+    drawStage();
+    lastTick = now;
+  }
+  requestAnimationFrame(loop);
+}
+
+function currentRect(){
+  if (!HERO_FRAMES) return null;
+  const idx = frameOrder[frameCursor];
+  document.getElementById('frameIdx').textContent = idx;
+  return (HERO_FRAMES[dir] || [])[idx];
+}
+
+function drawStage(){
+  sctx.clearRect(0,0,stage.width,stage.height);
+  const r = currentRect();
+  if (!r) return;
+  const scale = Math.min(stage.width/r.w, stage.height/r.h);
+  const dw = r.w*scale, dh = r.h*scale;
+  const dx = (stage.width-dw)/2, dy = (stage.height-dh)/2;
+  sctx.save();
+  if (r.flip){ sctx.translate(stage.width,0); sctx.scale(-1,1); }
+  const drawX = r.flip ? (stage.width - dw - dx) : dx;
+  sctx.drawImage(img, r.x, r.y, r.w, r.h, drawX, dy, dw, dh);
+  sctx.restore();
+}
+
+function renderStatic(){
+  const row = document.getElementById('staticRow');
+  row.innerHTML = '';
+  ['down','up','left','right'].forEach(d=>{
+    const wrap = document.createElement('div');
+    const cnv = document.createElement('canvas'); cnv.width=64; cnv.height=64;
+    const c = cnv.getContext('2d'); c.imageSmoothingEnabled=false;
+    const r = (HERO_FRAMES[d]||[])[1]; // Stand-Frame
+    if (r){
+      const scale = Math.min(64/r.w, 64/r.h);
+      const dw=r.w*scale, dh=r.h*scale, dx=(64-dw)/2, dy=(64-dh)/2;
+      c.save();
+      if (r.flip){ c.translate(64,0); c.scale(-1,1); }
+      const drawX = r.flip ? (64-dw-dx) : dx;
+      c.drawImage(img, r.x, r.y, r.w, r.h, drawX, dy, dw, dh);
+      c.restore();
+    }
+    const lbl = document.createElement('div'); lbl.textContent = d;
+    wrap.appendChild(cnv); wrap.appendChild(lbl);
+    row.appendChild(wrap);
+  });
+}
+
+img.onload = ()=>{};
+img.onerror = ()=>{ document.getElementById('err').textContent = 'hero.png nicht gefunden – Datei danebenlegen oder IMG_SRC im Script anpassen.'; };
+</script>
+</body>
+</html>

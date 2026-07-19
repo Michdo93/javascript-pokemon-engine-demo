@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Tool 1 – Tile-Ausschneider (8x8)</title>
+<style>
+  :root{ --bg:#1a1a2e; --panel:#242440; --accent:#ffd76b; --line:#3a3a5c; }
+  body{ margin:0; font-family:"Courier New",monospace; background:var(--bg); color:#eee; }
+  header{ padding:14px 20px; background:var(--panel); border-bottom:2px solid var(--line); }
+  h1{ margin:0 0 4px; font-size:18px; }
+  header p{ margin:2px 0; font-size:12px; color:#aab; }
+  code{ color:#8ecdf7; }
+  .layout{ display:flex; gap:16px; padding:16px; align-items:flex-start; flex-wrap:wrap; }
+  .panel{ background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:14px; }
+  .controls label{ display:block; font-size:12px; margin:8px 0 2px; color:#9ab; }
+  .controls input, .controls select{
+    width:80px; background:#111; color:#eee; border:1px solid var(--line);
+    border-radius:4px; padding:4px 6px; font-family:inherit;
+  }
+  .row{ display:flex; gap:10px; align-items:center; }
+  #canvasWrap{ max-width:70vw; max-height:80vh; overflow:auto; border:2px solid var(--line); border-radius:4px; background:
+    repeating-conic-gradient(#2a2a2a 0% 25%, #333 0% 50%) 50% / 16px 16px; }
+  canvas{ display:block; image-rendering: pixelated; cursor:crosshair; }
+  #preview{ image-rendering:pixelated; background:
+    repeating-conic-gradient(#2a2a2a 0% 25%, #333 0% 50%) 50% / 12px 12px;
+    border:1px solid var(--line); }
+  button{
+    background:#33335a; color:#eee; border:1px solid var(--line); border-radius:4px;
+    padding:6px 10px; cursor:pointer; font-family:inherit; font-size:12px; margin-top:8px;
+  }
+  button:hover{ background:#44446e; }
+  table{ border-collapse:collapse; font-size:11px; margin-top:8px; width:100%; }
+  td,th{ border:1px solid var(--line); padding:3px 6px; text-align:left; }
+  th{ color:var(--accent); }
+  textarea{
+    width:360px; height:160px; background:#111; color:#8ecdf7; border:1px solid var(--line);
+    border-radius:4px; padding:8px; font-family:inherit; font-size:11px;
+  }
+  .readout{ font-size:13px; margin:10px 0; }
+  .readout b{ color:var(--accent); }
+  #notfound{ display:none; color:#ff8080; padding:20px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Tool 1 / 5 — Tile-Ausschneider (8x8-Raster)</h1>
+  <p>Erwartet <code>tileset.png</code> im selben Ordner (relativer Pfad). Klick ins Bild wählt eine 8x8-Kachel.
+     Koordinaten sind <b>Raster-Einheiten</b> (Spalte/Zeile), Ursprung oben links. Pixel = Spalte×8 / Zeile×8.</p>
+</header>
+
+<div class="layout">
+
+  <div class="panel">
+    <div id="canvasWrap"><canvas id="main"></canvas></div>
+    <div id="notfound">
+      ⚠️ <code>tileset.png</code> konnte nicht geladen werden.<br>
+      Lege diese HTML-Datei in denselben Ordner wie deine <code>tileset.png</code>,
+      oder ändere <code>IMG_SRC</code> ganz oben im &lt;script&gt;.
+    </div>
+  </div>
+
+  <div class="panel controls" style="min-width:280px;">
+    <div class="row">
+      <div>
+        <label>Zoom</label>
+        <select id="zoom">
+          <option value="2">2x</option>
+          <option value="3" selected>3x</option>
+          <option value="4">4x</option>
+          <option value="6">6x</option>
+        </select>
+      </div>
+      <div>
+        <label>Spalte (col)</label>
+        <input type="number" id="col" value="0" min="0">
+      </div>
+      <div>
+        <label>Zeile (row)</label>
+        <input type="number" id="row" value="0" min="0">
+      </div>
+    </div>
+
+    <div class="readout">
+      Pixel-Koordinate: <b id="pxOut">0,0</b> &nbsp; (8x8 Block)
+    </div>
+
+    <canvas id="preview" width="128" height="128"></canvas>
+
+    <div class="row" style="margin-top:10px;">
+      <input type="text" id="tileName" placeholder="Name, z.B. grass_plain" style="width:180px;">
+      <button id="addBtn">+ Zur Liste</button>
+    </div>
+
+    <table id="listTable">
+      <thead><tr><th>Name</th><th>col</th><th>row</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+
+    <label style="margin-top:12px;">Export (JS-Array, für Tool 2/3 kopierbar)</label>
+    <textarea id="output" readonly></textarea>
+    <button id="copyBtn">In Zwischenablage kopieren</button>
+  </div>
+
+</div>
+
+<script>
+const IMG_SRC = "tileset.png"; // <- ggf. Dateinamen/Pfad anpassen
+const GRID = 8; // Basis-Rastergröße in Originalpixeln
+
+const img = new Image();
+img.src = IMG_SRC;
+
+const canvas = document.getElementById('main');
+const ctx = canvas.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+
+const previewCanvas = document.getElementById('preview');
+const pctx = previewCanvas.getContext('2d');
+pctx.imageSmoothingEnabled = false;
+
+const zoomSel = document.getElementById('zoom');
+const colInput = document.getElementById('col');
+const rowInput = document.getElementById('row');
+const pxOut = document.getElementById('pxOut');
+
+let sel = { col: 0, row: 0 };
+let list = [];
+
+function zoom(){ return parseInt(zoomSel.value, 10); }
+
+function draw(){
+  const z = zoom();
+  canvas.width = img.width * z;
+  canvas.height = img.height * z;
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+  // 8px Rasterlinien
+  ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+  ctx.lineWidth = 1;
+  for (let x=0; x<=canvas.width; x+=GRID*z){
+    ctx.beginPath(); ctx.moveTo(x+0.5,0); ctx.lineTo(x+0.5,canvas.height); ctx.stroke();
+  }
+  for (let y=0; y<=canvas.height; y+=GRID*z){
+    ctx.beginPath(); ctx.moveTo(0,y+0.5); ctx.lineTo(canvas.width,y+0.5); ctx.stroke();
+  }
+
+  // Auswahl-Highlight
+  ctx.strokeStyle = '#ffd76b';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(sel.col*GRID*z, sel.row*GRID*z, GRID*z, GRID*z);
+
+  drawPreview();
+}
+
+function drawPreview(){
+  pctx.clearRect(0,0,previewCanvas.width, previewCanvas.height);
+  pctx.drawImage(img, sel.col*GRID, sel.row*GRID, GRID, GRID, 0, 0, previewCanvas.width, previewCanvas.height);
+  pxOut.textContent = `${sel.col*GRID},${sel.row*GRID}`;
+  colInput.value = sel.col;
+  rowInput.value = sel.row;
+}
+
+canvas.addEventListener('click', (e)=>{
+  const rect = canvas.getBoundingClientRect();
+  const z = zoom();
+  const x = (e.clientX - rect.left) * (canvas.width/rect.width);
+  const y = (e.clientY - rect.top) * (canvas.height/rect.height);
+  sel.col = Math.floor(x / (GRID*z));
+  sel.row = Math.floor(y / (GRID*z));
+  draw();
+});
+
+zoomSel.addEventListener('change', draw);
+colInput.addEventListener('change', ()=>{ sel.col = Math.max(0, parseInt(colInput.value||0,10)); draw(); });
+rowInput.addEventListener('change', ()=>{ sel.row = Math.max(0, parseInt(rowInput.value||0,10)); draw(); });
+
+document.getElementById('addBtn').addEventListener('click', ()=>{
+  const name = document.getElementById('tileName').value.trim() || `tile_${sel.col}_${sel.row}`;
+  list.push({ name, col: sel.col, row: sel.row });
+  renderList();
+});
+
+function renderList(){
+  const tbody = document.querySelector('#listTable tbody');
+  tbody.innerHTML = '';
+  list.forEach((t,i)=>{
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${t.name}</td><td>${t.col}</td><td>${t.row}</td><td><button data-i="${i}">x</button></td>`;
+    tbody.appendChild(tr);
+  });
+  tbody.querySelectorAll('button').forEach(b=>{
+    b.addEventListener('click', ()=>{ list.splice(parseInt(b.dataset.i,10),1); renderList(); });
+  });
+  const out = list.map(t=>`  { name: "${t.name}", col: ${t.col}, row: ${t.row} }`).join(',\n');
+  document.getElementById('output').value = `const TILE_COORDS = [\n${out}\n];`;
+}
+
+document.getElementById('copyBtn').addEventListener('click', ()=>{
+  const ta = document.getElementById('output');
+  ta.select();
+  document.execCommand('copy');
+});
+
+img.onload = draw;
+img.onerror = ()=>{ document.getElementById('notfound').style.display = 'block'; };
+</script>
+</body>
+</html>

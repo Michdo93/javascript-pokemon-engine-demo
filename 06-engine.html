@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Mini-Pokemon-Engine (echte PNGs)</title>
+<style>
+  html,body{
+    margin:0; padding:0; height:100%;
+    background:#1a1a2e;
+    display:flex; align-items:center; justify-content:center;
+    font-family: "Courier New", monospace;
+    color:#eee;
+    flex-direction:column;
+    gap:10px;
+  }
+  #wrap{ position:relative; }
+  canvas{
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    border:4px solid #444;
+    border-radius:4px;
+    box-shadow:0 0 24px rgba(0,0,0,.6);
+    background:#000;
+  }
+  #hud{ font-size:12px; max-width:624px; line-height:1.5; opacity:.85; }
+  #hud b{ color:#ffd76b; }
+  #textbox{
+    position:absolute; left:12px; right:12px; bottom:12px;
+    background:#1e1e2f; border:3px solid #fff; border-radius:4px;
+    padding:10px 14px; font-size:14px; line-height:1.4; display:none;
+    box-shadow:0 4px 0 rgba(0,0,0,.4);
+  }
+  #textbox .hint{ display:block; text-align:right; font-size:10px; color:#9aa; margin-top:6px; }
+  #missing{
+    position:absolute; inset:0; display:none; align-items:center; justify-content:center;
+    background:rgba(0,0,0,.85); color:#ff8080; font-size:13px; text-align:center; padding:20px;
+    box-sizing:border-box;
+  }
+  #warn{
+    position:absolute; top:6px; left:6px; right:6px; display:none;
+    background:rgba(120,90,0,.9); color:#ffe9b0; font-size:11px; padding:6px 8px;
+    border-radius:4px; box-sizing:border-box;
+  }
+  code{ color:#8ecdf7; }
+</style>
+</head>
+<body>
+
+<div id="wrap">
+  <canvas id="game" width="624" height="432"></canvas>
+  <div id="warn"></div>
+  <div id="textbox"><span id="textboxContent"></span><span class="hint">[Enter drücken]</span></div>
+  <div id="missing">
+    ⚠️ <code>tileset.png</code> und/oder <code>hero.png</code> nicht gefunden.<br><br>
+    Lege diese HTML-Datei in denselben Ordner wie deine beiden PNG-Dateien
+    (Namen exakt <code>tileset.png</code> und <code>hero.png</code>),
+    oder passe <code>TILESET_SRC</code> / <code>HERO_SRC</code> ganz oben im Script an.
+  </div>
+</div>
+
+<div id="hud">
+  Steuerung: <b>Pfeiltasten / WASD</b> zum Laufen (Grid-basiert). <b>Enter</b> für Schilder.
+  Baum = echtes Multi-Block-Objekt aus <code>tileset.png</code> (kein Platzhalter mehr).
+</div>
+
+<script>
+// ============================================================================
+//  MINI POKEMON-ENGINE  –  liest echte tileset.png / hero.png (relativ verlinkt)
+// ============================================================================
+
+const TILESET_SRC = "tileset.png";
+const HERO_SRC     = "hero.png";
+
+const TILE   = 16;   // Zielgröße eines Blocks (2x2 Subtiles von je 8x8)
+const SUB    = 8;    // Subtile-Rohgröße im Tileset
+const SCALE  = 3;
+const DTILE  = TILE * SCALE;
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+
+const VIEW_W = canvas.width  / DTILE;
+const VIEW_H = canvas.height / DTILE;
+
+// ----------------------------------------------------------------------------
+// ASSETS
+// ----------------------------------------------------------------------------
+const tilesImg = new Image();
+tilesImg.src = TILESET_SRC;
+const heroImgRaw = new Image();
+heroImgRaw.src = HERO_SRC;
+
+// hero.png hat einen weißen Hintergrund (kein Alpha) - der wird nach dem Laden
+// einmalig in einen Offscreen-Canvas mit transparentem Hintergrund umgewandelt.
+// Gezeichnet wird im Spiel dann aus diesem Canvas, nicht aus dem rohen <img>.
+let heroSource = null; // wird nach dem Laden gesetzt (Canvas ODER Fallback-Image)
+
+function makeWhiteTransparent(image){
+  const off = document.createElement('canvas');
+  off.width = image.width; off.height = image.height;
+  const octx = off.getContext('2d');
+  octx.drawImage(image, 0, 0);
+  try{
+    const data = octx.getImageData(0, 0, off.width, off.height);
+    const px = data.data;
+    for (let i=0; i<px.length; i+=4){
+      // (fast) weiße Pixel transparent machen
+      if (px[i] > 240 && px[i+1] > 240 && px[i+2] > 240){
+        px[i+3] = 0;
+      }
+    }
+    octx.putImageData(data, 0, 0);
+    return off;
+  } catch(e){
+    // getImageData wird blockiert, wenn die Seite per file:// geöffnet wurde
+    // (Chrome markiert den Canvas dann als "getaintet"). Fallback: rohes Bild
+    // mit weißem Hintergrund verwenden und den Nutzer informieren.
+    showWarning('Weißer Hero-Hintergrund konnte nicht entfernt werden (Canvas-Sicherheitssperre bei file://). ' +
+      'Öffne die Seite stattdessen über einen lokalen Server, z.B. "python3 -m http.server" im Ordner, dann http://localhost:8000/06-engine.html aufrufen.');
+    return image;
+  }
+}
+
+function showWarning(msg){
+  const el = document.getElementById('warn');
+  el.textContent = '⚠️ ' + msg;
+  el.style.display = 'block';
+}
+
+// ----------------------------------------------------------------------------
+// COLLISION-CODES
+// ----------------------------------------------------------------------------
+const CODE = { FREE: 0, BLOCKED: 1, BEHIND: 2 };
+
+// ----------------------------------------------------------------------------
+// Wiederverwendbare Subtile-Referenzen (8x8-Raster von tileset.png)
+// ----------------------------------------------------------------------------
+const GRASS_SUB  = [ {col:6,row:0}, {col:7,row:0}, {col:6,row:1}, {col:7,row:1} ];
+const FLOWER_SUB = [ {col:0,row:4}, {col:1,row:4}, {col:0,row:5}, {col:1,row:5} ];
+
+// ----------------------------------------------------------------------------
+// GROUND-BLÖCKE (immer deckend, werden vor allem anderen gezeichnet)
+// FLOWER = Gras (Ebene 1) + Blume (Ebene 2) fest kombiniert -> der Hero läuft
+// immer sichtbar DARÜBER, da Ground-Blöcke nie am Tiefensortierungs-Vergleich
+// mit dem Hero teilnehmen (siehe render()).
+// ----------------------------------------------------------------------------
+const GROUND_BLOCKS = {
+  GRASS:  { layer1: GRASS_SUB, layer2: null },
+  FLOWER: { layer1: GRASS_SUB, layer2: FLOWER_SUB },
+  PATH:   { layer1: [ {col:2,row:2}, {col:3,row:2}, {col:2,row:3}, {col:3,row:3} ], layer2: null },
+};
+
+// Generische Block-Zeichenfunktion: 1 Block = 16x16 (4 Subtiles), skaliert auf DTILE.
+function drawBlock(destX, destY, block, srcImg){
+  if (!block) return;
+  const order = [[0,0],[1,0],[0,1],[1,1]]; // TL,TR,BL,BR
+  const half = DTILE/2;
+  function drawLayer(layer){
+    layer.forEach((t,i)=>{
+      if (!t) return;
+      const [qx,qy] = order[i];
+      ctx.drawImage(srcImg, t.col*SUB, t.row*SUB, SUB, SUB,
+        destX + qx*half, destY + qy*half, half, half);
+    });
+  }
+  drawLayer(block.layer1);
+  if (block.layer2) drawLayer(block.layer2);
+}
+
+// ----------------------------------------------------------------------------
+// BAUM als echtes Multi-Block-Objekt (2 Blöcke breit x 3 Blöcke hoch)
+// Obere Reihe: layer1 = "tree_with_grass" (Gras + Baumansatz fest verschmolzen
+//              in der Bildquelle), layer2 = obere Baumkrone -> CODE.BEHIND
+//              (Hero darf sich zwischen Ebene1/Ebene2 befinden = "dahinter laufen")
+// Mittlere + untere Reihe: layer1 = normales Gras, layer2 = Baumstamm/-krone
+//              -> CODE.BLOCKED
+// ----------------------------------------------------------------------------
+const OBJECT_tree = {
+  name: "tree",
+  w: 2, h: 3,
+  cells: [
+    { dx:0, dy:0, code: CODE.BEHIND,
+      layer1: [ {col:48,row:224}, {col:49,row:224}, {col:48,row:225}, {col:49,row:225} ],
+      layer2: [ {col:52,row:224}, {col:53,row:224}, {col:52,row:225}, {col:53,row:225} ] },
+    { dx:1, dy:0, code: CODE.BEHIND,
+      layer1: [ {col:50,row:224}, {col:51,row:224}, {col:50,row:225}, {col:51,row:225} ],
+      layer2: [ {col:54,row:224}, {col:55,row:224}, {col:54,row:225}, {col:55,row:225} ] },
+    { dx:0, dy:1, code: CODE.BLOCKED,
+      layer1: GRASS_SUB,
+      layer2: [ {col:52,row:226}, {col:53,row:226}, {col:52,row:227}, {col:53,row:227} ] },
+    { dx:1, dy:1, code: CODE.BLOCKED,
+      layer1: GRASS_SUB,
+      layer2: [ {col:54,row:226}, {col:55,row:226}, {col:54,row:227}, {col:55,row:227} ] },
+    { dx:0, dy:2, code: CODE.BLOCKED,
+      layer1: GRASS_SUB,
+      layer2: [ {col:52,row:228}, {col:53,row:228}, {col:52,row:229}, {col:53,row:229} ] },
+    { dx:1, dy:2, code: CODE.BLOCKED,
+      layer1: GRASS_SUB,
+      layer2: [ {col:54,row:228}, {col:55,row:228}, {col:54,row:229}, {col:55,row:229} ] },
+  ]
+};
+
+function placeTileObject(obj, tx, ty){
+  obj.cells.forEach(c=>{
+    collision[ty+c.dy][tx+c.dx] = c.code;
+  });
+  objects.push({
+    type:'tileObject', x:tx, y:ty, sortY:ty,
+    draw(px,py){
+      obj.cells.forEach(c=>{
+        drawBlock(px + c.dx*DTILE, py + c.dy*DTILE, { layer1:c.layer1, layer2:c.layer2 }, tilesImg);
+      });
+    }
+  });
+}
+
+function placeSign(tx, ty, scriptId){
+  collision[ty][tx] = CODE.BLOCKED;
+  objects.push({
+    type:'sign', x: tx, y: ty, sortY: ty, scriptId,
+    draw(px, py){
+      ctx.fillStyle = '#8a5a2b';
+      ctx.fillRect(px + DTILE*0.15, py + DTILE*0.35, DTILE*0.7, DTILE*0.45);
+      ctx.fillStyle = '#5c3a1a';
+      ctx.fillRect(px + DTILE*0.42, py + DTILE*0.75, DTILE*0.16, DTILE*0.25);
+      ctx.strokeStyle = '#3d2410';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(px + DTILE*0.15, py + DTILE*0.35, DTILE*0.7, DTILE*0.45);
+    }
+  });
+}
+
+const SCRIPTS = {
+  sign_welcome: "Willkommen in ROUTE 1!\nGeradeaus geht's Richtung Wald.",
+  sign_house:   "Das ist das Haus von Prof. Ulmer.\n(Tür/Warp bewusst weggelassen - Fokus liegt auf der Engine)",
+};
+
+// ----------------------------------------------------------------------------
+// MAP-DATEN
+// ----------------------------------------------------------------------------
+const MAP_W = 20, MAP_H = 15;
+
+function makeGround(){
+  const g = [];
+  for (let y=0;y<MAP_H;y++){
+    const row = [];
+    for (let x=0;x<MAP_W;x++) row.push('GRASS');
+    g.push(row);
+  }
+  for (let x=0;x<MAP_W;x++) g[7][x] = 'PATH';
+  for (let y=4;y<MAP_H;y++) g[y][10] = 'PATH';
+  // ein paar Blumen verstreut (rein dekorativ, Hero läuft frei darüber)
+  [[2,2],[3,9],[15,3],[6,11],[13,12],[17,9]].forEach(([x,y])=>{ g[y][x]='FLOWER'; });
+  return g;
+}
+const ground = makeGround();
+const collision = Array.from({length:MAP_H}, ()=> new Array(MAP_W).fill(CODE.FREE));
+const objects = [];
+
+placeTileObject(OBJECT_tree, 2, 1);
+placeTileObject(OBJECT_tree, 5, 1);
+placeTileObject(OBJECT_tree, 8, 1);
+placeTileObject(OBJECT_tree, 11, 1);
+placeTileObject(OBJECT_tree, 14, 1);
+placeTileObject(OBJECT_tree, 4, 4);
+placeTileObject(OBJECT_tree, 16, 4);
+placeSign(6, 6, 'sign_welcome');
+placeSign(12, 9, 'sign_house');
+
+// ----------------------------------------------------------------------------
+// HERO-FRAMES (aus hero-01-sprite-cutter.html, gegen hero.png verifiziert)
+// ----------------------------------------------------------------------------
+const HERO_FRAMES = {
+  down:  [ { x:0, y:0,  w:16, h:32 }, { x:16, y:0,  w:16, h:32 }, { x:32, y:0,  w:16, h:32 } ],
+  up:    [ { x:0, y:64, w:16, h:32 }, { x:16, y:64, w:16, h:32 }, { x:32, y:64, w:16, h:32 } ],
+  left:  [ { x:0, y:32, w:16, h:32, flip:true }, { x:16, y:32, w:16, h:32, flip:true }, { x:32, y:32, w:16, h:32, flip:true } ],
+  right: [ { x:0, y:32, w:16, h:32 }, { x:16, y:32, w:16, h:32 }, { x:32, y:32, w:16, h:32 } ],
+};
+
+const HERO_BOTTOM_PAD = 0; // Frames sind volle 16x32-Zellen mit eigenem Fuss-Abstand -> kein Extra-Puffer nötig
+
+// ----------------------------------------------------------------------------
+// HERO / SPIELER
+// ----------------------------------------------------------------------------
+const player = {
+  gridX: 3, gridY: 3,
+  px: 3*DTILE, py: 3*DTILE,
+  facing: 'down',
+  moving: false,
+  moveFrom: {x:0,y:0},
+  moveT: 0,
+  moveDuration: 160,
+  animFrame: 1,
+  stepToggle: false,
+};
+
+function tileWalkable(tx, ty){
+  if (tx<0||ty<0||tx>=MAP_W||ty>=MAP_H) return false;
+  const c = collision[ty][tx];
+  return c === CODE.FREE || c === CODE.BEHIND;
+}
+
+const heldDirs = [];
+const KEY_TO_DIR = {
+  ArrowUp:'up', KeyW:'up', ArrowDown:'down', KeyS:'down',
+  ArrowLeft:'left', KeyA:'left', ArrowRight:'right', KeyD:'right',
+};
+
+let textboxOpen = false;
+const textboxEl = document.getElementById('textbox');
+const textboxContentEl = document.getElementById('textboxContent');
+
+function openTextbox(text){ textboxOpen = true; textboxContentEl.innerHTML = text.replace(/\n/g,'<br>'); textboxEl.style.display='block'; }
+function closeTextbox(){ textboxOpen = false; textboxEl.style.display = 'none'; }
+
+window.addEventListener('keydown', (e)=>{
+  if (e.code === 'Enter' || e.code === 'Space'){
+    if (textboxOpen) closeTextbox(); else tryInteract();
+    e.preventDefault(); return;
+  }
+  const dir = KEY_TO_DIR[e.code];
+  if (dir){ if (!heldDirs.includes(dir)) heldDirs.push(dir); e.preventDefault(); }
+});
+window.addEventListener('keyup', (e)=>{
+  const dir = KEY_TO_DIR[e.code];
+  if (dir){ const i = heldDirs.indexOf(dir); if (i>=0) heldDirs.splice(i,1); }
+});
+
+function dirDelta(dir){
+  switch(dir){
+    case 'up': return {dx:0,dy:-1};
+    case 'down': return {dx:0,dy:1};
+    case 'left': return {dx:-1,dy:0};
+    case 'right': return {dx:1,dy:0};
+  }
+}
+
+function objectInFrontOfPlayer(){
+  const {dx,dy} = dirDelta(player.facing);
+  const tx = player.gridX+dx, ty = player.gridY+dy;
+  return objects.find(o => o.type==='sign' && o.x===tx && o.y===ty);
+}
+
+function tryInteract(){
+  const obj = objectInFrontOfPlayer();
+  if (obj && obj.type==='sign'){
+    openTextbox(SCRIPTS[obj.scriptId] || "...");
+  }
+}
+
+// ----------------------------------------------------------------------------
+// UPDATE
+// ----------------------------------------------------------------------------
+let lastTime = performance.now();
+
+function update(now){
+  const dt = now - lastTime;
+  lastTime = now;
+
+  if (!textboxOpen){
+    if (player.moving){
+      player.moveT += dt / player.moveDuration;
+      if (player.moveT >= 1){
+        player.moveT = 1; player.moving = false;
+        player.stepToggle = !player.stepToggle;
+        player.animFrame = 1;
+      } else {
+        player.animFrame = player.stepToggle ? 2 : 0;
+      }
+      const t = player.moveT;
+      player.px = player.moveFrom.x + (player.gridX*DTILE - player.moveFrom.x) * t;
+      player.py = player.moveFrom.y + (player.gridY*DTILE - player.moveFrom.y) * t;
+    } else if (heldDirs.length){
+      const dir = heldDirs[heldDirs.length-1];
+      player.facing = dir;
+      const {dx,dy} = dirDelta(dir);
+      const nx = player.gridX+dx, ny = player.gridY+dy;
+      if (tileWalkable(nx, ny)){
+        player.moveFrom = {x: player.px, y: player.py};
+        player.gridX = nx; player.gridY = ny;
+        player.moveT = 0; player.moving = true;
+      }
+    }
+  }
+
+  render();
+  requestAnimationFrame(update);
+}
+
+// ----------------------------------------------------------------------------
+// RENDER
+// ----------------------------------------------------------------------------
+function render(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  let camX = player.px + TILE*SCALE/2 - canvas.width/2;
+  let camY = player.py + TILE*SCALE/2 - canvas.height/2;
+  camX = Math.max(0, Math.min(camX, MAP_W*DTILE - canvas.width));
+  camY = Math.max(0, Math.min(camY, MAP_H*DTILE - canvas.height));
+
+  const startX = Math.max(0, Math.floor(camX/DTILE)-1);
+  const endX   = Math.min(MAP_W, Math.ceil((camX+canvas.width)/DTILE)+1);
+  const startY = Math.max(0, Math.floor(camY/DTILE)-1);
+  const endY   = Math.min(MAP_H, Math.ceil((camY+canvas.height)/DTILE)+1);
+
+  // Ebene 0: Ground-Blöcke (Gras/Weg/Blume) - immer unter dem Hero, keine Tiefensortierung nötig
+  for (let y=startY; y<endY; y++){
+    for (let x=startX; x<endX; x++){
+      drawBlock(x*DTILE - camX, y*DTILE - camY, GROUND_BLOCKS[ground[y][x]], tilesImg);
+    }
+  }
+
+  // Ebene 1: Objekte (Bäume, Schilder) + Hero, tiefensortiert nach Zeile
+  const drawables = [];
+  for (const o of objects){
+    drawables.push({ sortY: o.sortY, after:true, draw: ()=> o.draw(o.x*DTILE - camX, o.y*DTILE - camY) });
+  }
+  const heroSortY = player.py / DTILE;
+  drawables.push({ sortY: heroSortY, after:false, draw: ()=> drawHero(player.px - camX, player.py - camY) });
+
+  drawables.sort((a,b)=> a.sortY!==b.sortY ? a.sortY-b.sortY : (a.after - b.after));
+  for (const d of drawables) d.draw();
+}
+
+function drawHero(px, py){
+  const frames = HERO_FRAMES[player.facing];
+  const r = frames ? frames[player.animFrame] : null;
+  if (!r || !heroSource) return;
+  const destW = r.w*SCALE, destH = r.h*SCALE;
+  const footBottom = py + DTILE;
+  const destY = footBottom - HERO_BOTTOM_PAD*SCALE - destH;
+  const destX = px + DTILE/2 - destW/2;
+  ctx.save();
+  if (r.flip){
+    ctx.translate(destX+destW, destY);
+    ctx.scale(-1,1);
+    ctx.drawImage(heroSource, r.x, r.y, r.w, r.h, 0, 0, destW, destH);
+  } else {
+    ctx.drawImage(heroSource, r.x, r.y, r.w, r.h, destX, destY, destW, destH);
+  }
+  ctx.restore();
+}
+
+// ----------------------------------------------------------------------------
+// START
+// ----------------------------------------------------------------------------
+let tilesLoaded = false, heroLoaded = false;
+
+function tryStart(){
+  if (tilesLoaded && heroLoaded){
+    requestAnimationFrame((t)=>{ lastTime=t; update(t); });
+  }
+}
+
+tilesImg.onload = ()=>{ tilesLoaded = true; tryStart(); };
+heroImgRaw.onload = ()=>{
+  heroSource = makeWhiteTransparent(heroImgRaw); // Weiß -> transparent, einmalig
+  heroLoaded = true;
+  tryStart();
+};
+function onAssetFailed(){ document.getElementById('missing').style.display = 'flex'; }
+tilesImg.onerror = onAssetFailed;
+heroImgRaw.onerror = onAssetFailed;
+</script>
+</body>
+</html>

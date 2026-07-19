@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Tool 2 – 16x16-Block-Compositor</title>
+<style>
+  :root{ --bg:#1a1a2e; --panel:#242440; --accent:#ffd76b; --line:#3a3a5c; }
+  body{ margin:0; font-family:"Courier New",monospace; background:var(--bg); color:#eee; }
+  header{ padding:14px 20px; background:var(--panel); border-bottom:2px solid var(--line); }
+  h1{ margin:0 0 4px; font-size:18px; }
+  header p{ margin:2px 0; font-size:12px; color:#aab; }
+  code{ color:#8ecdf7; }
+  .layout{ display:flex; gap:16px; padding:16px; align-items:flex-start; flex-wrap:wrap; }
+  .panel{ background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:14px; }
+  #canvasWrap{ max-width:60vw; max-height:80vh; overflow:auto; border:2px solid var(--line); border-radius:4px;
+    background: repeating-conic-gradient(#2a2a2a 0% 25%, #333 0% 50%) 50% / 16px 16px; }
+  canvas{ display:block; image-rendering:pixelated; }
+  #main{ cursor:crosshair; }
+  select, input{
+    background:#111; color:#eee; border:1px solid var(--line); border-radius:4px;
+    padding:4px 6px; font-family:inherit; font-size:12px;
+  }
+  label{ display:block; font-size:11px; color:#9ab; margin:8px 0 2px; }
+  .quad{
+    display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr;
+    width:120px; height:120px; border:1px solid var(--line); gap:2px; background:#000;
+  }
+  .quad div{ display:flex; align-items:center; justify-content:center; font-size:10px; background:#222; }
+  .slotBtn{
+    width:100%; height:100%; background:#2a2a44; border:1px solid var(--line); color:#eee;
+    cursor:pointer; font-size:10px; font-family:inherit;
+  }
+  .slotBtn.active{ outline:2px solid var(--accent); }
+  .previewRow{ display:flex; gap:16px; align-items:flex-start; margin-top:12px; }
+  .previewBox canvas{ image-rendering:pixelated;
+    background: repeating-conic-gradient(#2a2a2a 0% 25%, #333 0% 50%) 50% / 10px 10px;
+    border:1px solid var(--line); }
+  .previewBox p{ font-size:11px; text-align:center; margin:4px 0; color:#9ab; }
+  button{
+    background:#33335a; color:#eee; border:1px solid var(--line); border-radius:4px;
+    padding:6px 10px; cursor:pointer; font-family:inherit; font-size:12px; margin-top:8px;
+  }
+  button:hover{ background:#44446e; }
+  textarea{
+    width:340px; height:200px; background:#111; color:#8ecdf7; border:1px solid var(--line);
+    border-radius:4px; padding:8px; font-family:inherit; font-size:11px;
+  }
+  h3{ font-size:13px; color:var(--accent); margin:4px 0; }
+  #notfound{ display:none; color:#ff8080; padding:20px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Tool 2 / 5 — 16x16-Block aus 4x 8x8-Subtiles zusammensetzen</h1>
+  <p>Ein "Block" besteht aus 4 Kacheln zu je 8x8 (oben-links / oben-rechts / unten-links / unten-rechts).
+     Ebene 1 = Untergrund (deckend), Ebene 2 = Objekt (kann transparent sein, liegt über Ebene 1).
+     Wähle unten einen Slot, klick dann im Tileset die passende 8x8-Kachel an.</p>
+</header>
+
+<div class="layout">
+  <div class="panel">
+    <div id="canvasWrap"><canvas id="main"></canvas></div>
+    <div id="notfound">
+      ⚠️ <code>tileset.png</code> konnte nicht geladen werden. Datei in denselben Ordner legen
+      oder <code>IMG_SRC</code> im Script anpassen.
+    </div>
+  </div>
+
+  <div class="panel" style="min-width:340px;">
+    <h3>Ebene 1 (Untergrund)</h3>
+    <div class="quad" id="quadL1">
+      <div><button class="slotBtn" data-slot="l1-tl">TL<br><span></span></button></div>
+      <div><button class="slotBtn" data-slot="l1-tr">TR<br><span></span></button></div>
+      <div><button class="slotBtn" data-slot="l1-bl">BL<br><span></span></button></div>
+      <div><button class="slotBtn" data-slot="l1-br">BR<br><span></span></button></div>
+    </div>
+
+    <h3 style="margin-top:16px;">Ebene 2 (Objekt, optional)</h3>
+    <label><input type="checkbox" id="useL2"> Ebene 2 verwenden</label>
+    <div class="quad" id="quadL2">
+      <div><button class="slotBtn" data-slot="l2-tl">TL<br><span></span></button></div>
+      <div><button class="slotBtn" data-slot="l2-tr">TR<br><span></span></button></div>
+      <div><button class="slotBtn" data-slot="l2-bl">BL<br><span></span></button></div>
+      <div><button class="slotBtn" data-slot="l2-br">BR<br><span></span></button></div>
+    </div>
+
+    <div class="previewRow">
+      <div class="previewBox">
+        <p>Ebene 1</p>
+        <canvas id="prevL1" width="128" height="128"></canvas>
+      </div>
+      <div class="previewBox">
+        <p>Ebene 2</p>
+        <canvas id="prevL2" width="128" height="128"></canvas>
+      </div>
+      <div class="previewBox">
+        <p>Kombiniert</p>
+        <canvas id="prevCombo" width="128" height="128"></canvas>
+      </div>
+    </div>
+
+    <label style="margin-top:14px;">Block-Name</label>
+    <input type="text" id="blockName" value="mein_block" style="width:200px;">
+
+    <label>Export (JS, für Tool 3 / Engine)</label>
+    <textarea id="output" readonly></textarea>
+    <button id="copyBtn">In Zwischenablage kopieren</button>
+  </div>
+</div>
+
+<script>
+const IMG_SRC = "tileset.png";
+const GRID = 8;
+const ZOOM = 3;
+
+const img = new Image();
+img.src = IMG_SRC;
+
+const canvas = document.getElementById('main');
+const ctx = canvas.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+
+// Slot-Zustand: jeweils {col,row} oder null
+const slots = {
+  'l1-tl': null, 'l1-tr': null, 'l1-bl': null, 'l1-br': null,
+  'l2-tl': null, 'l2-tr': null, 'l2-bl': null, 'l2-br': null,
+};
+let activeSlot = 'l1-tl';
+
+document.querySelectorAll('.slotBtn').forEach(btn=>{
+  if (btn.dataset.slot === activeSlot) btn.classList.add('active');
+  btn.addEventListener('click', ()=>{
+    activeSlot = btn.dataset.slot;
+    document.querySelectorAll('.slotBtn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+  });
+});
+
+function draw(){
+  canvas.width = img.width * ZOOM;
+  canvas.height = img.height * ZOOM;
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.drawImage(img, 0,0, canvas.width, canvas.height);
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  for (let x=0;x<=canvas.width;x+=GRID*ZOOM){ ctx.beginPath();ctx.moveTo(x+0.5,0);ctx.lineTo(x+0.5,canvas.height);ctx.stroke(); }
+  for (let y=0;y<=canvas.height;y+=GRID*ZOOM){ ctx.beginPath();ctx.moveTo(0,y+0.5);ctx.lineTo(canvas.width,y+0.5);ctx.stroke(); }
+
+  // alle belegten Slots markieren
+  for (const key in slots){
+    const s = slots[key];
+    if (!s) continue;
+    ctx.strokeStyle = key.startsWith('l1') ? '#7ec4ff' : '#ffd76b';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(s.col*GRID*ZOOM, s.row*GRID*ZOOM, GRID*ZOOM, GRID*ZOOM);
+  }
+  updatePreviews();
+}
+
+canvas.addEventListener('click', (e)=>{
+  const rect = canvas.getBoundingClientRect();
+  const x = (e.clientX-rect.left) * (canvas.width/rect.width);
+  const y = (e.clientY-rect.top) * (canvas.height/rect.height);
+  const col = Math.floor(x/(GRID*ZOOM));
+  const row = Math.floor(y/(GRID*ZOOM));
+  slots[activeSlot] = { col, row };
+  document.querySelector(`[data-slot="${activeSlot}"] span`).textContent = `${col},${row}`;
+  draw();
+});
+
+function drawLayerToCanvas(targetCtx, prefix){
+  targetCtx.clearRect(0,0,128,128);
+  const order = [['tl',0,0],['tr',1,0],['bl',0,1],['br',1,1]];
+  for (const [name,qx,qy] of order){
+    const s = slots[prefix+'-'+name];
+    if (!s) continue;
+    targetCtx.drawImage(img, s.col*GRID, s.row*GRID, GRID, GRID, qx*64, qy*64, 64, 64);
+  }
+}
+
+function updatePreviews(){
+  const c1 = document.getElementById('prevL1').getContext('2d');
+  const c2 = document.getElementById('prevL2').getContext('2d');
+  const cc = document.getElementById('prevCombo').getContext('2d');
+  c1.imageSmoothingEnabled = c2.imageSmoothingEnabled = cc.imageSmoothingEnabled = false;
+
+  drawLayerToCanvas(c1, 'l1');
+  cc.clearRect(0,0,128,128);
+  cc.drawImage(document.getElementById('prevL1'), 0,0);
+
+  document.getElementById('prevL2').style.opacity = document.getElementById('useL2').checked ? 1 : 0.25;
+  drawLayerToCanvas(c2, 'l2');
+  if (document.getElementById('useL2').checked){
+    cc.drawImage(document.getElementById('prevL2'), 0,0);
+  }
+  updateOutput();
+}
+
+document.getElementById('useL2').addEventListener('change', updatePreviews);
+document.getElementById('blockName').addEventListener('input', updateOutput);
+
+function fmt(s){ return s ? `{ col: ${s.col}, row: ${s.row} }` : 'null'; }
+
+function updateOutput(){
+  const name = document.getElementById('blockName').value.trim() || 'block';
+  const useL2 = document.getElementById('useL2').checked;
+  const l1 = `[ ${fmt(slots['l1-tl'])}, ${fmt(slots['l1-tr'])}, ${fmt(slots['l1-bl'])}, ${fmt(slots['l1-br'])} ]`;
+  const l2 = useL2
+    ? `[ ${fmt(slots['l2-tl'])}, ${fmt(slots['l2-tr'])}, ${fmt(slots['l2-bl'])}, ${fmt(slots['l2-br'])} ]`
+    : 'null';
+  document.getElementById('output').value =
+`// Reihenfolge je Ebene: [TL, TR, BL, BR] -- je {col,row} im 8x8-Raster von tileset.png
+const BLOCK_${name} = {
+  name: "${name}",
+  layer1: ${l1},
+  layer2: ${l2}, // null = keine 2. Ebene für diesen Block
+};`;
+}
+
+img.onload = draw;
+img.onerror = ()=>{ document.getElementById('notfound').style.display='block'; };
+</script>
+</body>
+</html>
